@@ -227,7 +227,12 @@ NOTES:
  *   分值：1
  */
 int bitXor(int x, int y) {
-  return 2;
+  return ~(x & y) & ~(~x & ~y);
+  /* 
+  (x & y) 是x和y中均为1的位置掩码，(~x & ~y)是x和y中均为0的位置掩码
+  要求这二者并集的补
+  取反求交即可
+  */
 }
 /*
  * tmin - return minimum two's complement integer
@@ -242,7 +247,7 @@ int bitXor(int x, int y) {
  */
 int tmin(void) {
 
-  return 2;
+  return 1 << 31;
 
 }
 //2
@@ -259,7 +264,16 @@ int tmin(void) {
  *   分值：1
  */
 int isTmax(int x) {
-  return 2;
+  int y = ~x;
+  /* 
+  思路：观察到 Tmax有个特点是，Tmax+1溢出到Tmin，恰好和Tmax互补。
+  于是取反相等，但是题目不允许用==，所以用异或。
+  可以预见，如果相等，异或为0，其他任何情况均不为0
+  然后用 ! 限制到0/1即可。
+  注意还要排除-1的干扰，-1+1会溢出截断到0，取反也和-1相等。
+  捋清楚逻辑之后，用 | 排除即可，前0后不0，则满足条件。
+  */
+  return !((y ^ (x+1)) | !(x+1));
 }
 /*
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -277,7 +291,14 @@ int isTmax(int x) {
  *   分值：2
  */
 int allOddBits(int x) {
-  return 2;
+  int mask = (0x55<<8) + 0x55;
+  mask = (mask << 16) + mask;
+  return !(~(x | mask));
+  // int mask = (0xAA<<8) + 0xAA;
+  // mask = (mask << 16) + mask;
+  // return !((x&mask)^mask);
+
+  // 这两种做法均可
 }
 /*
  * negate - return -x
@@ -293,7 +314,7 @@ int allOddBits(int x) {
  *   分值：2
  */
 int negate(int x) {
-  return 2;
+  return ~x + 1;
 }
 //3
 /*
@@ -314,7 +335,12 @@ int negate(int x) {
  *   分值：3
  */
 int isAsciiDigit(int x) {
-  return 2;
+  int f1 = x>>6;
+  int f2 = (x & 0x30) ^ 0x30;
+  int tail = x & 0xf;
+  int temp = tail + 6;
+  int f3 =  temp >> 4;
+  return !(f1 | f2 | f3);
 }
 /*
  * conditional - same as x ? y : z
@@ -330,7 +356,10 @@ int isAsciiDigit(int x) {
  *   分值：3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+  int st = !!x;
+  int mask = ~st + 1;
+  return (mask & y) | (~mask & z);
+  // 这里教给我们构建标准mask
 }
 /*
  * isLessOrEqual - if x <= y  then return 1, else return 0
@@ -346,7 +375,13 @@ int conditional(int x, int y, int z) {
  *   分值：3
  */
 int isLessOrEqual(int x, int y) {
-  return 2;
+  int sx = (x >> 31) & 1; // x 的符号位
+  int sy = (y >> 31) & 1; // y 的符号位
+  int diffSign = sx ^ sy; // 符号不同为 1
+  int diffResult = sx; // 判断x的首位
+  // 符号相同时：计算 y - x，非负则 x <= y（不会溢出）
+  int sameResult = !(((y + (~x + 1)) >> 31) & 1);
+  return (diffSign & diffResult) | (!diffSign & sameResult);
 }
 //4
 /*
@@ -364,10 +399,14 @@ int isLessOrEqual(int x, int y) {
  *   分值：4
  */
 int logicalNeg(int x) {
-  return 2;
+  int m = ~x+1;
+  int s = ((m >> 31) | (x >> 31)) & 1;
+  // 只需要判断+x和-x是不是符号至少有一个是负的即可。
+  return s ^ 1;
 }
+
 /* howManyBits - return the minimum number of bits required to represent x in
- *             two's complement
+ *             two's complement、
  *  Examples: howManyBits(12) = 5
  *            howManyBits(298) = 10
  *            howManyBits(-5) = 4
@@ -390,7 +429,31 @@ int logicalNeg(int x) {
  *   分值：4
  */
 int howManyBits(int x) {
-  return 0;
+  // 所有变量声明放最前面 
+  int sig;
+  int b16, b8, b4, b2, b1;
+
+  // 二分查找
+  sig = x >> 31;
+  x ^= sig;
+
+  b16 = !!(x >> 16) << 4;
+  x  >>= b16;
+
+  b8 = !!(x >> 8) << 3;
+  x >>= b8;
+
+  b4 = !!(x >> 4) << 2;
+  x >>= b4;
+
+  b2 = !!(x >> 2) << 1;
+  x >>= b2;
+
+  b1 = !!(x >> 1);
+  x >>= b1;
+
+  return b16 + b8 + b4 + b2 + b1 + x + 1;
+  
 }
 //float
 /*
@@ -412,7 +475,14 @@ int howManyBits(int x) {
  *   分值：4
  */
 unsigned floatScale2(unsigned uf) {
-  return 2;
+  unsigned f = uf >> 31;
+  unsigned em = (uf << 1) >> 1;
+  unsigned e = (uf << 1) >> 24;
+  unsigned m = (uf << 9) >> 9;
+  if(e==0) return (f<<31) + (em<<1);
+  else if(e==254) return (f<<31) + ((e+1)<<23);
+  else if(e==255) return uf;
+  else return (f<<31) + ((e+1)<<23) + m;
 }
 /*
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
@@ -434,7 +504,18 @@ unsigned floatScale2(unsigned uf) {
  *   分值：4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+  unsigned f = uf >> 31;
+  unsigned e = (uf<<1) >> 24;
+  unsigned m = ((uf<<9) >> 9)+1;
+  if(e>=127){
+    m += (1>>23);
+    e -= 127;
+  }
+  else return 0;
+  if(e>=31) return (1<<31);
+  if(!f) return ((m<<e)+(1<<23)-1)>>23;
+  else
+    return -(((m << e) + (1 << 23) - 1) >> 23);
 }
 /*
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
@@ -457,5 +538,11 @@ int floatFloat2Int(unsigned uf) {
  *   分值：4
  */
 unsigned floatPower2(int x) {
-    return 2;
+  if(x>127) return 0x7f800000;
+  if(x>=-126) return (x+127)<<23;
+  if(x>=-149){
+    int k = x+149;
+    return 1<<k;
+  }
+  else return 0;
 }
