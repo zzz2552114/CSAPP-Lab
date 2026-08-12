@@ -1,0 +1,3 @@
+mov $0x59b997fa,%edi
+add $0x8,%rsp
+ret
