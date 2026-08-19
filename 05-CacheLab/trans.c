@@ -36,7 +36,70 @@ int is_transpose(int M, int N, int A[N][M], int B[M][N]);
 char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {
-    /* 在这里编写你的转置代码 */
+    int r, c, k, p;
+    int a0, a1, a2, a3, a4, a5, a6, a7;
+
+    for (r = 0; r < N; r += 8)
+    {
+        for (c = 0; c < M; c += 8)
+        {
+            for (k = r; k < r + 4; k++)
+            {
+                // 读 A 的一行到寄存器
+                a0 = A[k][c + 0];
+                a1 = A[k][c + 1];
+                a2 = A[k][c + 2];
+                a3 = A[k][c + 3];
+                a4 = A[k][c + 4];
+                a5 = A[k][c + 5];
+                a6 = A[k][c + 6];
+                a7 = A[k][c + 7];
+                // 从寄存器写 B 的一列
+                B[c + 0][k] = a0;
+                B[c + 1][k] = a1;
+                B[c + 2][k] = a2;
+                B[c + 3][k] = a3;
+                // 暂存的思想
+                B[c + 0][k+4] = a4;
+                B[c + 1][k+4] = a5;
+                B[c + 2][k+4] = a6;
+                B[c + 3][k+4] = a7;
+            }
+            for(p = c;p<c+4;p++){
+                // 先把暂存的东西放到temp里，注意，存是竖着存，拿是横着拿
+                a0 = B[p][k];
+                a1 = B[p][k+1];
+                a2 = B[p][k+2];
+                a3 = B[p][k+3];
+                
+                a4 = A[k][p];
+                a5 = A[k+1][p];
+                a6 = A[k+2][p];
+                a7 = A[k+3][p];
+                // 下面真的存
+                B[p][k] = a4;
+                B[p][k+1] = a5;
+                B[p][k+2] = a6;
+                B[p][k+3] = a7;
+
+                B[p+4][r] = a0;
+                B[p + 4][r+1] = a1;
+                B[p + 4][r+2] = a2;
+                B[p + 4][r+3] = a3;
+            }
+            for(k=r+4;k<r+8;k++){
+                a0 = A[k][c+4];
+                a1 = A[k][c+5];
+                a2 = A[k][c+6];
+                a3 = A[k][c+7];
+                
+                B[c+4][k] = a0;
+                B[c+5][k] = a1;
+                B[c+6][k] = a2;
+                B[c+7][k] = a3;
+            }
+        }
+    }
 }
 
 /*
@@ -48,12 +111,80 @@ void transpose_submit(int M, int N, int A[N][M], int B[M][N])
  * 转置函数，帮助你起步。
  */
 
+char transpose_4_desc[] = "Transpose 4based block";
+void transpose_4(int M, int N, int A[N][M], int B[M][N])
+{
+    int r, c, a0, a1, a2, a3,a4,a5,a6,a7,k;
+    // 8x8 blocking for 32x32
+    for (c = 0; c < M; c += 8)
+    {
+        for (r = 0; r < N; r += 8)
+        {
+            for (k = r; k < r + 8; k++)
+            {
+                a0 = A[k][c + 0];
+                a1 = A[k][c + 1];
+                a2 = A[k][c + 2];
+                a3 = A[k][c + 3];
+                // 从寄存器写 B 的一列
+                B[c + 0][k] = a0;
+                B[c + 1][k] = a1;
+                B[c + 2][k] = a2;
+                B[c + 3][k] = a3;
+            }
+            for (k = r; k < r + 8; k++)
+            {
+                a4 = A[k][c + 4];
+                a5 = A[k][c + 5];
+                a6 = A[k][c + 6];
+                a7 = A[k][c + 7];
+                B[c + 4][k] = a4;
+                B[c + 5][k] = a5;
+                B[c + 6][k] = a6;
+                B[c + 7][k] = a7;
+            }
+        }
+    }
+}
+
+char transpose_84_desc[] = "Transpose 8based-4inner block";
+void transpose_84(int M, int N, int A[N][M], int B[M][N])
+{
+    int r, c, a0, a1, a2, a3;
+    for( r = 0;r < N;r += 8 ){
+        for( c = 0;c < M; c += 8 ){
+            // 上面是外层的8*8
+            int i = 0,j = 0;
+            while(j<=1){
+                while(i<=1){
+                    for(int ri = r+4*i;ri<r+4*(i+1);ri++){
+                        int ci = c+j*4;
+                        a0 = A[ri][ci];
+                        a1 = A[ri][ci+1];
+                        a2 = A[ri][ci+2];
+                        a3 = A[ri][ci+3];
+
+                        B[ci][ri] = a0;
+                        B[ci+1][ri] = a1;
+                        B[ci+2][ri] = a2;
+                        B[ci+3][ri] = a3;
+                    }
+                    i++;
+                }
+                j++;
+                i=0;
+            }
+        }
+    }
+}
 /*
  * trans - A simple baseline transpose function, not optimized for the cache.
  */
 /* 中文翻译：
  * trans —— 一个简单的基准转置函数，没有针对缓存做任何优化。
  */
+
+
 char trans_desc[] = "Simple row-wise scan transpose";
 void trans(int M, int N, int A[N][M], int B[M][N])
 {
@@ -88,6 +219,8 @@ void registerFunctions()
 
     /* Register any additional transpose functions */
     /* 中文：注册任何额外的转置函数 */
+    registerTransFunction(transpose_4,transpose_4_desc);
+    registerTransFunction(transpose_84,transpose_84_desc);
     registerTransFunction(trans, trans_desc);
 
 }
