@@ -1,4 +1,4 @@
-# CSAPP 实验题解与学习笔记
+# CSAPP 实验题解与实验笔记
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -6,6 +6,7 @@
 
 > 参考书籍是《Computer Systems: A Programmer's Perspective》，也即 CSAPP
 
+> ***本 repo 的笔记仅为实验笔记 。学习笔记见我的另一个仓库  [学习笔记](https://github.com/zzz2552114/Notes/tree/main/cmu15-213--CSAPP)***
 ## 背景说明
 
 每个实验目录通常包含以下内容：

@@ -135,6 +135,7 @@ pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
 struct job_t *getjobjid(struct job_t *jobs, int jid); 
 int pid2jid(pid_t pid); 
+pid_t jid2pid(int jid);
 void listjobs(struct job_t *jobs);
 
 void usage(void);
@@ -177,7 +178,7 @@ int main(int argc, char **argv)
 	    break;
 	default:
             usage();
-	}
+	    }
     }
     /* 中文：用 getopt 解析命令行开关
      *   -h  打印帮助信息
@@ -254,21 +255,50 @@ int main(int argc, char **argv)
  * 注意：每个子进程必须有一个独立的进程组 ID，这样当我们在键盘上
  * 输入 ctrl-c（ctrl-z）时，后台子进程不会从内核收到 SIGINT（SIGTSTP）。
  */
+sigset_t old_proc;
+
 void eval(char *cmdline)
 {
+    char* argv[MAXARGS];
+    
+    int bg = parseline(cmdline,argv);
+
+    // argv 表示解析出来的命令行
+    if(builtin_cmd(argv)) return;
+    pid_t ppid;
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask,SIGCHLD);
+    sigprocmask(SIG_BLOCK,&mask,&old_proc);
+    int cjid = nextjid;
+    if((ppid=fork()) < 0)
+        unix_error("fork error");
+
+    if(ppid==0)
+    {
+        sigprocmask(SIG_SETMASK, &old_proc, NULL);
+        setpgid(0, 0);
+        if(execve(argv[0], argv, environ)<0){
+            printf("%s: %s\n", argv[0], "Command not found.");
+            exit(1);
+        }
+    }
+    else{
+        if(!bg) {
+            addjob(jobs, ppid,FG , cmdline);
+            waitfg(ppid);
+            sigprocmask(SIG_SETMASK, &old_proc, NULL);
+        }
+        else{
+            addjob(jobs, ppid, BG, cmdline);
+            sigprocmask(SIG_SETMASK, &old_proc, NULL);
+            printf("[%d] (%d) %s",cjid,ppid,cmdline);
+        }
+    }
+
+
     return;
 }
-/* 中文翻译：实现思路（参考 PDF「提示」一节与教材第 8 章）
- * 1. 用 parseline 解析命令行，得到 argv 和是否后台（bg）；
- * 2. 若是内置命令（builtin_cmd 返回非 0），直接返回；
- * 3. 否则 fork 前用 sigprocmask 阻塞 SIGCHLD（防止竞态）；
- *    fork 后，子进程要 setpgid(0,0) 进入新进程组、
- *    解除对 SIGCHLD 的阻塞，再 execve 新程序；
- * 4. 父进程用 addjob 把子进程加入作业列表，然后解除 SIGCHLD 阻塞；
- * 5. 若为后台作业，打印 "[jid] (pid) cmdline &"，返回；
- *    若为前台作业，调用 waitfg(pid) 等它完成。
- * 注意：要用 execvp 或 execve 找可执行文件；fork 失败要报错。 */
-
 /*
  * parseline - Parse the command line and build the argv array.
  *
@@ -299,27 +329,27 @@ int parseline(const char *cmdline, char **argv)
     /* Build the argv list */
     argc = 0;
     if (*buf == '\'') {
-	buf++;
-	delim = strchr(buf, '\'');
+        buf++;
+        delim = strchr(buf, '\'');
     }
     else {
-	delim = strchr(buf, ' ');
+	    delim = strchr(buf, ' ');   
     }
 
     while (delim) {
-	argv[argc++] = buf;
-	*delim = '\0';
-	buf = delim + 1;
-	while (*buf && (*buf == ' ')) /* ignore spaces */
-	       buf++;
+        argv[argc++] = buf;
+        *delim = '\0';
+        buf = delim + 1;
+        while (*buf && (*buf == ' ')) /* ignore spaces */
+            buf++;
 
-	if (*buf == '\'') {
-	    buf++;
-	    delim = strchr(buf, '\'');
-	}
-	else {
-	    delim = strchr(buf, ' ');
-	}
+        if (*buf == '\'') {
+            buf++;
+            delim = strchr(buf, '\'');
+        }
+        else {
+            delim = strchr(buf, ' ');
+        }
     }
     argv[argc] = NULL;
 
@@ -328,23 +358,10 @@ int parseline(const char *cmdline, char **argv)
 
     /* should the job run in the background? */
     if ((bg = (*argv[argc-1] == '&')) != 0) {
-	argv[--argc] = NULL;
+	    argv[--argc] = NULL;
     }
     return bg;
 }
-/* 中文翻译：
- * 实现思路：
- *   static char array[] 保存命令行的本地副本（静态数组，只此一份）；
- *   buf 是遍历命令行的工作指针；delim 指向下一个分隔符。
- *   1. 把末尾的 '\n' 替换成空格，跳过开头的空格；
- *   2. 若以单引号开头，则把下一个单引号当分隔符（支持带空格的
- *      单个参数），否则把空格当分隔符；
- *   3. 循环里把 buf 记入 argv[argc++]，把 *delim 置 '\0' 截断当前
- *      参数，buf 移到分隔符后继续找下一个参数；最后 argv[argc]=NULL；
- *   4. 若最后一个参数是 '&'，把它从 argv 里去掉，并返回真（后台）；
- *      否则返回假（前台）。空行（argc==0）按后台处理返回 1。
- * 这个函数已经实现好了，你不需要修改。 */
-
 /*
  * builtin_cmd - If the user has typed a built-in command then execute
  *    it immediately.
@@ -354,16 +371,19 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv)
 {
+    if(strcmp(argv[0],"quit")==0){
+        exit(0);
+    }
+    else if(strcmp(argv[0],"jobs")==0){
+        listjobs(jobs);
+        return 1;
+    }
+    else if(strcmp(argv[0],"bg")==0 || strcmp(argv[0],"fg")==0){
+        do_bgfg(argv);
+        return 1;
+    }
     return 0;     /* not a builtin command */
 }
-/* 中文翻译：实现思路
- * 判断 argv[0] 并执行相应动作，是内置命令则返回 1，否则返回 0：
- *   "quit"：exit(0) 终止 shell；
- *   "jobs"：调用 listjobs(jobs) 列出所有后台作业；
- *   "bg" 或 "fg"：调用 do_bgfg(argv) 实现；
- *   其他：返回 0（不是内置命令，交给 eval 去 fork 执行）。
- * 注意：quit/jobs/bg/fg 这四个命令都要在这里处理，且处理后返回 1。 */
-
 /*
  * do_bgfg - Execute the builtin bg and fg commands
  */
@@ -372,22 +392,52 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv)
 {
-    return;
-}
-/* 中文翻译：实现思路
- * argv[1] 是作业标识，可能以 '%' 开头（JID，如 %5）也可能不带（PID，如 5）：
- *   - 以 '%' 开头：用 getjobjid(jobs, jid) 按 JID 查作业；
- *   - 不带 '%'：用 getjobpid(jobs, pid) 按 PID 查作业（PID 是整数，可用 atoi 转）。
- * 查不到时打印 "%s: No such job" 后返回；argv[1] 缺失时打印 "%s command requires PID or %%jobid argument"。
- * 对 fg：
- *   1. 用 kill(-job->pid, SIGCONT) 重启该作业（负号表示发给整个进程组）；
- *   2. 把作业状态改成 FG；
- *   3. 调用 waitfg(job->pid) 等它结束。
- * 对 bg：
- *   1. 用 kill(-job->pid, SIGCONT) 重启该作业；
- *   2. 把作业状态改成 BG；
- *   3. 打印 "[%d] (%d) %s"（jid、pid、cmdline），表示它在后台继续运行。 */
+    pid_t cpid;
+    struct job_t* cjob;
 
+    if(argv[1]==NULL){
+        printf("%s command requires PID or %%jobid argument\n",argv[0]);
+        return;
+    }
+    if (argv[1][0] == '%')
+    {
+        // 说明这个 job 是 jid
+        // 说明我要找到 pid
+        int j = atoi(argv[1] + 1);
+        cjob = getjobjid(jobs, j);
+        if(cjob==NULL){
+            printf("%s: No such job\n", argv[1]);
+            return;
+        }
+        cpid = cjob->pid;
+    }
+    else if (argv[1][0] >= '1' && argv[1][0] <= '9')
+    {
+        cpid = atoi(argv[1]);
+        cjob = getjobpid(jobs, cpid);
+        if(cjob == NULL){
+            printf("(%d) : No such process\n",cpid);
+            return;
+        }
+    }
+    else{
+        printf("%s: argument must be a PID or %%jobid\n",argv[0]);
+        return;
+    }
+
+    if(strcmp(argv[0],"fg")==0){
+        cjob->state = FG;
+
+        kill(-cpid, SIGCONT);
+        waitfg(cjob->pid);
+    }
+    else if(strcmp(argv[0],"bg")==0){
+        cjob->state = BG;
+        kill(-cpid, SIGCONT);
+        printf("[%d] (%d) %s", cjob->jid, cjob->pid, cjob->cmdline);
+    }
+   return;
+}
 /*
  * waitfg - Block until process pid is no longer the foreground process
  */
@@ -396,16 +446,12 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    while (pid==fgpid(jobs))
+    {
+        sigsuspend(&old_proc);
+    }
     return;
 }
-/* 中文翻译：实现思路（PDF 推荐做法）
- * 用忙等循环：while (pid == fgpid(jobs)) sleep(1);
- * 也就是说，只要 pid 仍然是前台作业的 PID 就继续睡 1 秒再检查。
- * 这样会把 CPU 让出去（sleep），同时把"回收子进程"的工作
- * 全部留给 sigchld_handler 去做（handler 里恰好一次 waitpid）。
- * 当前台作业被 handler 回收并从作业列表删除后，fgpid(jobs) 返回 0，
- * 循环条件不成立，waitfg 返回。 */
-
 /*****************
  * Signal handlers
  *****************/
@@ -425,28 +471,22 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig)
 {
+    pid_t ret;
+    int state;
+    while( (ret = waitpid(-1,&state,WUNTRACED|WNOHANG)) > 0){
+        struct job_t* cjob = getjobpid(jobs,ret);
+        if(WIFSIGNALED(state)){
+            printf("Job [%d] (%d) terminated by signal 2\n", cjob->jid, ret);
+        }
+        else if(WIFSTOPPED(state)){
+            printf("Job [%d] (%d) stopped by signal 20\n", cjob->jid, ret);
+            cjob->state = ST;
+        }
+        if(cjob->state!=ST)
+            deletejob(jobs,ret);
+    }
     return;
 }
-/* 中文翻译：实现思路（PDF 推荐：handler 里恰好一次 waitpid）
- * 用 while 循环 + waitpid(-1, &status, WUNTRACED | WNOHANG) 回收：
- *   - WNOHANG：没有已终止/已停止的子进程时立即返回 0，不阻塞；
- *   - WUNTRACED：报告已停止（未终止）的子进程，这样 ctrl-z 停住的
- *     作业也能被感知；
- *   - waitpid 返回 >0 表示回收/感知到一个子进程，循环继续收下一个；
- *     返回 0 表示没有更多了，退出循环；返回 -1（errno==ECHILD）
- *     表示没有子进程了，退出循环。
- * 处理逻辑：
- *   - 用 WIFEXITED(status) 判断是否正常退出（exit 或 return），
- *     正常退出就从作业表删除该作业；
- *   - 用 WIFSIGNALED(status) 判断是否被信号终止，若是则打印
- *     "Job [jid] (pid) terminated by signal %d"，并用 WTERMSIG(status)
- *     得到信号编号，然后从作业表删除；
- *   - 用 WIFSTOPPED(status) 判断是否被停止，若是则打印
- *     "Job [jid] (pid) stopped by signal %d"，用 WSTOPSIG(status)
- *     得到信号编号，并把作业状态改成 ST（不能从作业表删除）。
- * 注意：信号处理器里用 printf 有一定风险（非异步信号安全），
- * 但本 lab 的测试规模小，教材示例也这样写，可以接受。 */
-
 /*
  * sigint_handler - The kernel sends a SIGINT to the shell whenver the
  *    user types ctrl-c at the keyboard.  Catch it and send it along
@@ -458,17 +498,13 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig)
 {
+    int olderrno = errno;
+    pid_t cpid = fgpid(jobs);
+    if(cpid!=0)
+        kill(-cpid, SIGINT);
+    errno = olderrno;
     return;
 }
-/* 中文翻译：实现思路
- * 1. 用 fgpid(jobs) 取当前前台作业的 PID；
- * 2. 若存在（pid > 0），用 kill(-pid, SIGINT) 把 SIGINT 发给
- *    整个前台进程组（负号是关键！否则后台作业也会收到信号，
- *    sdriver.pl 会测这个错误）；
- * 3. 若没有前台作业（pid == 0），什么都不做（信号无效果）。
- * 注意：前台作业最终被 sigchld_handler 回收并打印
- * "Job ... terminated by signal 2"（SIGINT 的编号是 2）。 */
-
 /*
  * sigtstp_handler - The kernel sends a SIGTSTP to the shell whenever
  *     the user types ctrl-z at the keyboard. Catch it and suspend the
@@ -480,18 +516,14 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig)
 {
+    int olderrno = errno;
+    pid_t cpid = fgpid(jobs);
+    if(cpid!=0)
+        kill(-cpid,SIGTSTP);
+
+    errno = olderrno;
     return;
 }
-/* 中文翻译：实现思路
- * 与 sigint_handler 几乎一样，只是信号换成 SIGTSTP：
- * 1. 用 fgpid(jobs) 取当前前台作业的 PID；
- * 2. 若存在（pid > 0），用 kill(-pid, SIGTSTP) 把 SIGTSTP 发给
- *    整个前台进程组（负号发给进程组，不能只发单个 pid）；
- * 3. 若没有前台作业，什么都不做。
- * 前台作业被停止后，sigchld_handler（WUNTRACED 分支）会把它记为
- * "Job ... stopped by signal 20"（SIGTSTP 的编号是 20），并把该作业
- * 的状态改为 ST（stopped），这样 jobs/bg/fg 才能继续操作它。 */
-
 /*********************
  * End signal handlers
  *********************/
@@ -540,8 +572,8 @@ int maxjid(struct job_t *jobs)
     int i, max=0;
 
     for (i = 0; i < MAXJOBS; i++)
-	if (jobs[i].jid > max)
-	    max = jobs[i].jid;
+        if (jobs[i].jid > max)
+            max = jobs[i].jid;
     return max;
 }
 
@@ -555,18 +587,18 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
 	return 0;
 
     for (i = 0; i < MAXJOBS; i++) {
-	if (jobs[i].pid == 0) {
-	    jobs[i].pid = pid;
-	    jobs[i].state = state;
-	    jobs[i].jid = nextjid++;
-	    if (nextjid > MAXJOBS)
-		nextjid = 1;
-	    strcpy(jobs[i].cmdline, cmdline);
-  	    if(verbose){
-	        printf("Added job [%d] %d %s\n", jobs[i].jid, jobs[i].pid, jobs[i].cmdline);
+        if (jobs[i].pid == 0) {
+            jobs[i].pid = pid;
+            jobs[i].state = state;
+            jobs[i].jid = nextjid++;
+            if (nextjid > MAXJOBS)
+                nextjid = 1;
+            strcpy(jobs[i].cmdline, cmdline);
+            if(verbose){
+                printf("Added job [%d] %d %s\n", jobs[i].jid, jobs[i].pid, jobs[i].cmdline);
             }
             return 1;
-	}
+        }
     }
     printf("Tried to create too many jobs\n");
     return 0;
@@ -587,11 +619,11 @@ int deletejob(struct job_t *jobs, pid_t pid)
 	return 0;
 
     for (i = 0; i < MAXJOBS; i++) {
-	if (jobs[i].pid == pid) {
-	    clearjob(&jobs[i]);
-	    nextjid = maxjid(jobs)+1;
-	    return 1;
-	}
+        if (jobs[i].pid == pid) {
+            clearjob(&jobs[i]);
+            nextjid = maxjid(jobs)+1;
+            return 1;
+        }
     }
     return 0;
 }
@@ -627,7 +659,7 @@ struct job_t *getjobjid(struct job_t *jobs, int jid)
     int i;
 
     if (jid < 1)
-	return NULL;
+	    return NULL;
     for (i = 0; i < MAXJOBS; i++)
 	if (jobs[i].jid == jid)
 	    return &jobs[i];
@@ -641,11 +673,24 @@ int pid2jid(pid_t pid)
     int i;
 
     if (pid < 1)
-	return 0;
+	    return 0;
     for (i = 0; i < MAXJOBS; i++)
-	if (jobs[i].pid == pid) {
+        if (jobs[i].pid == pid) 
             return jobs[i].jid;
-        }
+        
+    return 0;
+}
+
+pid_t jid2pid(int jid)
+{
+    int i;
+
+    if (jid < 1)
+        return 0;
+    for (i = 0; i < MAXJOBS; i++)
+        if (jobs[i].jid == jid)
+            return jobs[i].pid;
+
     return 0;
 }
 
@@ -656,24 +701,24 @@ void listjobs(struct job_t *jobs)
     int i;
 
     for (i = 0; i < MAXJOBS; i++) {
-	if (jobs[i].pid != 0) {
-	    printf("[%d] (%d) ", jobs[i].jid, jobs[i].pid);
-	    switch (jobs[i].state) {
-		case BG:
-		    printf("Running ");
-		    break;
-		case FG:
-		    printf("Foreground ");
-		    break;
-		case ST:
-		    printf("Stopped ");
-		    break;
-	    default:
-		    printf("listjobs: Internal error: job[%d].state=%d ",
-			   i, jobs[i].state);
-	    }
-	    printf("%s", jobs[i].cmdline);
-	}
+        if (jobs[i].pid != 0) {
+            printf("[%d] (%d) ", jobs[i].jid, jobs[i].pid);
+            switch (jobs[i].state) {
+            case BG:
+                printf("Running ");
+                break;
+            case FG:
+                printf("Foreground ");
+                break;
+            case ST:
+                printf("Stopped ");
+                break;
+            default:
+                printf("listjobs: Internal error: job[%d].state=%d ",
+                i, jobs[i].state);
+            }
+            printf("%s", jobs[i].cmdline);
+        }
     }
 }
 /* 中文翻译：
