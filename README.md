@@ -6,7 +6,7 @@
 
 > 参考书籍是《Computer Systems: A Programmer's Perspective》，也即 CSAPP
 
-> ***本 repo 的笔记仅为实验笔记 。学习笔记见我的另一个仓库  [学习笔记](https://github.com/zzz2552114/Notes/tree/main/cmu15-213--CSAPP)***
+> ***本 repo 不设置内置笔记。学习笔记见我的另一个仓库  [学习笔记](https://github.com/zzz2552114/Notes/tree/main/cmu15-213--CSAPP)***
 ## 背景说明
 
 每个实验目录通常包含以下内容：
@@ -52,7 +52,6 @@
 - 具体作业直接阅读各实验目录中的 `README.zh.md` 或 `writeup.zh.md` 即可。
 - 各实验目录下的 `README` 为课程分发的英文原始说明，`README.zh.md` 为其中文翻译。
 - 各个 `writeup.md` 与 `writeup.zh.md` 分别为实验 PDF 的中英文 `markdown` 版本。
-- 部分实验提供了逐题的解题记录，例如 `02-BombLab/solution-docs/`与 `03-AttackLab/solution-docs/`。
 - 作业文件中的中文注释 1：1 对照原英文翻译。
 
 
